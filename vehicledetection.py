@@ -61,8 +61,6 @@ def get_hog_features_single_ch(image,  vis = False, orient = 9, pix_per_cel = 8,
 
         return features       
 
-
-
 # This function will obtain the features vector composed of spatial features (calling bin_spatial), 
 #color features (color_histogram fuction) and gradient features (hog function)
 def extract_features(imgs, spatial_size=(32, 32),
@@ -183,35 +181,47 @@ def search_windows(img, windows, clf, scaler,
     #8) Return windows for positive detections
     return on_windows
     
+#This function defines the main pipeline
+def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, yinitial = 400, return_draw = False):
 
-def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, ystart = 400, return_draw = False):
-    ystop = 656
+    #Defines the last line to look for vehicles
+    yfinal = 656
+    #hog definitions (# of orientation bins)
+    hog_bins = 9
+    #hog definitions (pixels in each cell)
     pix_per_cell = 8
+    #hog definitions (cell in each block)
     cells_per_block = 2
+    #window size for looking for cars (relative size changes by scaling full image)
     window_size = 64
-    
+    # subsampling size
+    spatial_binning_size = (32,32)
+
     img_boxes = []
-    count = 0
-    #Clone image to draw over it
+    #Clone image to draw over it, if required
     if return_draw:
         img2draw = img_arg.copy()
         
+    #normalize image, as training was performed with pngs
     img = img_arg.copy()
     img = img.astype(np.float32)/256
 
-    cropped_image = img[ystart:ystop,:,:]
+    #get cropped image (region of interest)
+    cropped_image = img[yinitial:yfinal,:,:]
+    
+    #convert to YCrCb colorspace (found to have better detection performance)
     cropped_YCrCb = cv2.cvtColor(cropped_image, cv2.COLOR_RGB2YCrCb)
     if scale !=1:
         imshape = cropped_YCrCb.shape
         cropped_YCrCb = cv2.resize(cropped_YCrCb, (np.int(imshape[1]/scale), np.int(imshape[0]/scale)))
     
+    #Split channels
     channel0 = cropped_YCrCb[:,:,0] 
     channel1 = cropped_YCrCb[:,:,1]
     channel2 = cropped_YCrCb[:,:,2]
     
     #define blocks for hog
     #hog orientations bins
-    hog_bins = 9
     nx_cells = (channel0.shape[1] // pix_per_cell) -1
     ny_cells = (channel0.shape[0] // pix_per_cell) -1
     ncells_per_window = (window_size // pix_per_cell)-1
@@ -225,7 +235,6 @@ def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, ystart = 4
 
     for xstep in range(nxsteps):
         for ystep in range(min(nysteps,maxysteps)):
-            count += 1
             ypos = ystep*cells_per_step
             xpos = xstep*cells_per_step
             
@@ -255,8 +264,8 @@ def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, ystart = 4
                 xbox_left = np.int(xleft*scale)
                 ybox_top = np.int(ytop*scale)
                 scaled_window_size = np.int(window_size*scale)
-                foundbox = ((xbox_left,ybox_top+ystart),
-                            (xbox_left+scaled_window_size, ybox_top+ystart+scaled_window_size))
+                foundbox = ((xbox_left,ybox_top+yinitial),
+                            (xbox_left+scaled_window_size, ybox_top+yinitial+scaled_window_size))
                 if return_draw:
                     if scale == 1:
                         rec_color = (0,0,255)
@@ -268,17 +277,95 @@ def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, ystart = 4
                         rec_color = (0,255,255)
                     cv2.rectangle(img2draw, foundbox[0], foundbox[1], rec_color,2)
                 img_boxes.append(foundbox)
-                heatmap[ybox_top+ystart:ybox_top+scaled_window_size+ystart,xbox_left:xbox_left+scaled_window_size]+=1
+                heatmap[ybox_top+yinitial:ybox_top+scaled_window_size+yinitial,xbox_left:xbox_left+scaled_window_size]+=1
     if return_draw:
         return img2draw, heatmap
     else:
         return heatmap
+
+# This function is passed as argument to the VideoClip builder
+# It will use a global heatmap so that it can be integrated over frames
+# also, the heatmap is softened in each frame by 30%, so that if a heat zone stops being "hitted"
+# it will "cool down" 30% by frame, going assintotically to zero
+def process_frame(img_frame):
+    global heatmap
+    scale = 1;
+    heatmap =find_cars(img_frame, heatmap, scale, maxysteps= 10,cells_per_step=3)
+    scale = 1.5
+    heatmap =find_cars(img_frame, heatmap, scale, maxysteps= 100,cells_per_step=2,yinitial=400)
+    heatmap = heatmap*0.7
+    labels =label(heatmap>2)
+    draw_img =  draw_labeled_boxes(img_frame, labels)
+    return draw_img
+
         
+def train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 500):
+    # time is used for measuring training performance
+    import time
+    tic = time.time()
+    #From full labeled set (of vehicles), pick random samples
+    random_indexes = np.random.randint(0, min(len(vehicle_img_paths),len(non_vehicle_img_paths)), samples)
+    car_sample = []
+    noncar_sample =[]
+    for idx in random_indexes:
+        vehicle_img = plt.imread(vehicle_img_paths[idx])
+        nonvehicle_img = plt.imread(non_vehicle_img_paths[idx])
+        #Each sample image is loaded and converted to YCrCb colorspace
+        car_sample.append(cv2.cvtColor(vehicle_img, cv2.COLOR_RGB2YCrCb)) 
+        noncar_sample.append(cv2.cvtColor(nonvehicle_img, cv2.COLOR_RGB2YCrCb))
+    
+    #Lists are transformed to numpy arrays
+    car_sample = np.array(car_sample)
+    noncar_sample = np.array(noncar_sample)
+    
+    #Size for spacial binnig (subsampling)
+    spatial_binning_size = (32, 32)
+    
+    #extract features of the samples
+    car_features = extract_features(car_sample,spatial_binning_size)
+    noncar_features = extract_features(noncar_sample,spatial_binning_size)
+    
+    #stack samples
+    X = np.vstack((car_features, noncar_features))
+    print('Initial Sample size:')
+    print(X.shape)
+    
+    #define a scaling function to the features
+    sample_scaler = StandardScaler().fit(X)
+    #scale sample 
+    X_in_scale = sample_scaler.transform(X)
+    #define sample labels
+    y = np.hstack((np.ones(len(car_features)),np.zeros(len(noncar_features))))
+
+    #Define random seed for splitting of sample in train and test set     
+    seed = np.random.randint(1,100)
+    X_train, X_test, y_train, y_test = train_test_split( X_in_scale, y, test_size = 0.2, random_state = seed)
+
+    print('Train sample size:')
+    print(X_train.shape)
+    print('Test sample size:')
+    print(X_test.shape)
+    
+    #Define linear SVCS
+    svc = LinearSVC()
+
+    #Train SVC    
+    svc.fit(X_train, y_train)
+    
+    #Test and get accuracy
+    accuracy = svc.score(X_test, y_test)
+    
+    tac = time.time()
+    print('Time: {} seconds:'.format(round(tac-tic,3)))
+    print('Accuracy: {}'.format(round(accuracy,5), '.4f'))
+ 
+    #Return the classifier and the scaler that will be necessary to fit future samples
+    return svc, sample_scaler
+
 
 
 ### Start of program
-### First demonstrate the calibration feature with a chessboard image
-### Test pipeline on a single image
+### Open dataset
 vehicle_dir = './vehicles/'
 non_vehicle_dir = './non-vehicles/'
 
@@ -319,129 +406,76 @@ ax4.set_title(titles[3])
 ax4.imshow(noncar_hog_img, 'gray')
 plt.figure()        
 
-import time
-tic = time.time()
-samples = 50
-random_indexes = np.random.randint(0, min(len(vehicle_img_paths),len(non_vehicle_img_paths)), samples)
-car_sample = []
-noncar_sample =[]
-for idx in random_indexes:
-    vehicle_img = plt.imread(vehicle_img_paths[idx])
-    nonvehicle_img = plt.imread(non_vehicle_img_paths[idx])
-    car_sample.append(cv2.cvtColor(vehicle_img, cv2.COLOR_RGB2YCrCb)) 
-    noncar_sample.append(cv2.cvtColor(nonvehicle_img, cv2.COLOR_RGB2YCrCb))
-car_sample = np.array(car_sample)
-noncar_sample = np.array(noncar_sample)
 
-#Parameters to tune
-spatial_binning_size = (32, 32)
-hog_channel     = 0
-
-print('tamanho do vetor de carros')
-print(len(car_sample))
-
-print('Tamanho da imagem para treinamento')
-print(car_sample[0].shape)
-
-#extract features of the samples
-car_features = extract_features(car_sample,spatial_binning_size)
-noncar_features = extract_features(noncar_sample,spatial_binning_size)
-
-#stack samples
-X = np.vstack((car_features, noncar_features))
-
-print('tamanho da amostra')
-print(X.shape)
+# Create and train linear SVC classifier. Pass path to vehicles and nonvehicle images
+# will return the classifier and the scaler necessary to fit features that will extracted
+# in the future to the same "basis" as the training set
+svc, sample_scaler = train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 5000)
 
 
-#define a scaling function to the features
-sample_scaler = StandardScaler().fit(X)
+# images = []
+# titles = []
+# y_start_stop = [None, None]
+# xy_window = (128,128)
+# y_start_stop = [None, None]
+# overlap = 0.5
+# 
+# for img_src in example_img_src:
+#     initial_image = mpimg.imread(example_folder+'/'+img_src)
+#     initial_image = initial_image.astype(np.float32)/255
+#     windows_list = slide_window(initial_image, x_start_stop = [None, None], y_start_stop = y_start_stop, xy_window = (128,128), xy_overlap = (overlap,overlap))
+#     hits =  search_windows(initial_image, windows_list, svc, scaler = sample_scaler)
+#     drawn_image = draw_boxes(initial_image, hits, color = (0,0,255), thick=6)
+#     images.append(drawn_image)
+#     titles.append(img_src)
 
-#scale sample 
-X_in_scale = sample_scaler.transform(X)
-
-#define sample labels
-y = np.hstack((np.ones(len(car_features)),np.zeros(len(noncar_features))))
-
-seed = np.random.randint(1,100)
-X_train, X_test, y_train, y_test = train_test_split( X_in_scale, y, test_size = 0.2, random_state = seed)
-
-svc = LinearSVC()
-svc.fit(X_train, y_train)
-accuracy = svc.score(X_test, y_test)
-
-tac = time.time()
-print('Time: {} seconds:'.format(round(tac-tic,3)))
-print('Accuracy: {}'.format(round(accuracy,5), '.4f'))
-
-
-## Try-out on the test images
+## Try-out classifier on the test images
 example_folder = 'test_images'
 example_img_src = os.listdir(example_folder)
 
-
-images = []
+heatmap = np.zeros_like(car_image_clrcvrt[:,:,0])
+images =[]
 titles = []
-
-y_start_stop = [None, None]
-xy_window = (128,128)
-y_start_stop = [None, None]
-overlap = 0.5
-
 for img_src in example_img_src:
     initial_image = mpimg.imread(example_folder+'/'+img_src)
-    initial_image = initial_image.astype(np.float32)/255
-    windows_list = slide_window(initial_image, x_start_stop = [None, None], y_start_stop = y_start_stop, xy_window = (128,128), xy_overlap = (overlap,overlap))
-    hits =  search_windows(initial_image, windows_list, svc, scaler = sample_scaler)
-    drawn_image = draw_boxes(initial_image, hits, color = (0,0,255), thick=6)
+    heatmap, drawn_image =find_cars(initial_image, heatmap, scale =1, maxysteps= 100,cells_per_step=2, return_draw = True)
     images.append(drawn_image)
     titles.append(img_src)
 
+half_imags = np.int(np.floor(len(images)/2))
+print(half_imags)
+plt.figure()
+f, subplot_tuple = plt.subplots(2, half_imags, figsize=(40,20))
+for i in range(0,2):
+    for j in range(0,half_imags):
+        idx = i*half_imags+j
+        subplot_tuple[i][j].set_title(titles[idx])
+        subplot_tuple[i][j].imshow(images[idx])
+plt.show()
 
-global heatmap 
+test_video = 'harder_challenge_video.mp4'
+test_output = 'harder_challenge_video_output.mp4'
+
+#heatmap initialization is required
 heatmap = np.zeros_like(initial_image[:,:,0])
-def process_frame(img_frame):
-    global heatmap
-    scale = 1;
-    heatmap =find_cars(img_frame, heatmap, scale, maxysteps= 10,cells_per_step=3)
-    scale = 1.5
-    heatmap =find_cars(img_frame, heatmap, scale, maxysteps= 100,cells_per_step=2,ystart=400)
-    heatmap = heatmap*0.7
-    labels =label(heatmap>2)
-    draw_img =  draw_labeled_boxes(img_frame, labels)
-    return draw_img
-
-test_video = 'project_video.mp4'
-test_video = 'challenge_video.mp4'
-test_output = 'car_finding_output.mp4'
-test_output = 'challenge_video_output.mp4'
-
 clip = VideoFileClip(test_video)    
 test_clip = clip.fl_image(process_frame)
 test_clip.write_videofile(test_output, audio = False)
 
+test_video = 'project_video.mp4'
+test_output = 'project_video_output.mp4'
 
-# scale = 1.5
-# out_images = []
-# out_titles =[]
-# heatmap = np.zeros_like(initial_image[:,:,0])
-# for img_src in example_img_src:
-#     test_img = mpimg.imread(example_folder+'/'+img_src)
-#     img2draw, heatmap = find_cars(test_img, heatmap, scale,10 , )
-#     heatmap =heatmap*0.7
-#     labels = label(heatmap>3)
-#     draw_image = draw_labeled_boxes(test_img, labels)
-#     out_images.append(draw_image)
-#     out_titles.append(img_src)
-#     out_titles.append(img_src)
-#     out_images.append(heatmap)
-#     
-# 
-# half_imags = np.int(np.floor(len(out_images)/2))
-# f, subplot_tuple = plt.subplots(half_imags, 2,   figsize=(12,24))
-# for i in range(0,half_imags):
-#     for j in range(0,2):
-#         idx = i*2+j
-#         subplot_tuple[j][j].set_title(out_titles[idx])
-#         subplot_tuple[i][j].imshow(out_images[idx])
-# plt.show()
+#heatmap initialization is required
+heatmap = np.zeros_like(initial_image[:,:,0])
+clip = VideoFileClip(test_video)    
+test_clip = clip.fl_image(process_frame)
+test_clip.write_videofile(test_output, audio = False)
+
+test_video = 'challenge_video.mp4'
+test_output = 'challenge_video_output.mp4'
+
+#heatmap initialization is required
+heatmap = np.zeros_like(initial_image[:,:,0])
+clip = VideoFileClip(test_video)    
+test_clip = clip.fl_image(process_frame)
+test_clip.write_videofile(test_output, audio = False)

@@ -39,24 +39,75 @@ You're reading it!
 ####1. Explain how (and identify where in your code) you extracted HOG features from the training images. Explain how you settled on your final choice of HOG parameters..
 
 The hog function was utilized based on each of the channels of the YCrCb image (this provided better results than RGB). The hog function from 
-skimage.feature was used with 9 bins of orientation (hog papers explain 9 is a good parameter), 8 pixels per cell and 2 cells per block (based on the classes examples) . Furthemore, the hog is applied to the full image, 
-with param feature_vector = False so that the hog for each window may be retrieved latter from the returned hog image (feature_vector = True will not return the hog parameters as a vector).
+skimage.feature was used with 9 bins of orientation (hog papers explain 9 is a good parameter), 8 pixels per cell and 2 cells per block (based on the classes examples) . 
+Furthemore, the hog is applied to the idividual labeled samples (as in windowed images) for traing, but it is applied to the full camera image on the main pipeline (find_cars function in line 185). 
+In order to apply the hog function to the full image, the parameter "feature_vector" is set to "False" so that the hog for each search window may be latter retrieved (feature_vector = True will not return the hog parameters as a vector).
 
-![alt text][image1dfafasf]
+See below hog function applied to a sample of the labeled data:
 
-I then explored different color spaces and different `skimage.hog()` parameters (`orientations`, `pixels_per_cell`, and `cells_per_block`).  I grabbed random images from each of the two classes and displayed them to get a feel for what the `skimage.hog()` output looks like.
-
-Here is an example using the `YCrCb` color space and HOG parameters of `orientations=8`, `pixels_per_cell=(8, 8)` and `cells_per_block=(2, 2)`:
+---------------INCLUIR---------------
 
 
-![alt text][image2]
+See below definition of hog paremeters in find_cars function (line 185):
+
+```python
+#This function defines the main pipeline
+def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, yinitial = 400, return_draw = False):
+    #Defines the last line to look for vehicles
+    yfinal = 656
+    #hog definitions (# of orientation bins)
+    hog_bins = 9
+    #hog definitions (pixels in each cell)
+    pix_per_cell = 8
+    #hog definitions (cell in each block)
+    cells_per_block = 2
+    #window size for looking for cars (relative size changes by scaling full image)
+    window_size = 64
+	...
+```
+
 
 ####2. Describe how (and identify where in your code) you trained a classifier using your selected HOG features (and color features if you used them).
 
 I use a linear SVM. The reason a linear SVM was used is that from the first atempts it provided great results with accuracy of near 99%. 
+Three feature sets were used: hog, spatial features (after binning from 64x64 to 32x32 pixels) and color histogram with 32 colour bins. 
+I have started project using RGB but after watching support video I changed to YCrCb and it provided great results. The features vector
+is normalized with zero mean and unit variance before used for training.
 
-Three feature sets were used: hog, spatial features (after binning from 64x64 to 32x32 pixels) and color histogram with 32 colour bins. I have started project using
-RGB but after watching support video I changed to YCrCb and it provided great results.
+See below extracted code showing scaling of features vector, random splitting sample into "train set" and "test set", definition of classifier, training and validation (testing). 
+The code can be found inside function train_classifier(), more preciselly starting o line 330
+
+```python
+    #define a scaling function to the features
+    sample_scaler = StandardScaler().fit(X)
+    #scale sample 
+    X_in_scale = sample_scaler.transform(X)
+    #define sample labels
+    y = np.hstack((np.ones(len(car_features)),np.zeros(len(noncar_features))))
+
+    #Define random seed for splitting of sample in train and test set     
+    seed = np.random.randint(1,100)
+    X_train, X_test, y_train, y_test = train_test_split( X_in_scale, y, test_size = 0.2, random_state = seed)
+
+    print('Train sample size:')
+    print(X_train.shape)
+    print('Test sample size:')
+    print(X_test.shape)
+    
+    #Define linear SVCS
+    svc = LinearSVC()
+
+    #Train SVC    
+    svc.fit(X_train, y_train)
+    
+    #Test and get accuracy
+    accuracy = svc.score(X_test, y_test)
+    
+    tac = time.time()
+    print('Time: {} seconds:'.format(round(tac-tic,3)))
+    print('Accuracy: {}'.format(round(accuracy,5), '.4f'))
+```
+
 
 ###Sliding Window Search
 
