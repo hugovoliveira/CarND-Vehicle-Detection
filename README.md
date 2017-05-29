@@ -112,12 +112,12 @@ Instead of changing the window size, a trick was used (from video support)consis
 
 The find_cars() function has an argument of "cells_per_step" that will provide to the window search the overlap. 
 For instance, with a 8x8 cels, a cells_per_step of 4 will give a 50% overlap.
-For the video run, the pipeline function find_cars() is called twice, with scaling of 1 and 1.5 and the overlap is 25% (2 in 8).
+For the video run, the pipeline function find_cars() is called twice, with scaling of 1.4 and 1.7 and 2.4 and the overlap is 1/8, 1/4 and 1/8 respectively.
 
 The window search will also locate the hog features calculated previously in each window. This helps with processing time as the hog feature 
 will only have to be called once.
 
-For demonstrating the sliding window (and the rest of the pipeline), the find_cars() was called 3 times for each image 
+For demonstrating the sliding window (and the rest of the pipeline), the find_cars() was called 2 times for each image 
 with scaling (changing window size) of 1.0 (detections in blue), 1.5 (detections in green):
 
 See below the sliding window code starting at line 246 (inside find_cars())
@@ -170,7 +170,7 @@ See below the sliding window code starting at line 246 (inside find_cars())
 I searched on two scales with different overlaps using YCrCb HOG features (for each of the 3 channels), spatial features (raw subsampled pixels) and color histograms in the feature vector.
 This has provided me a nice result. 
 
-This arrangement was used, together with the sample size (5000 used for each image class) that has provided a very good false positive tolerance 
+This arrangement was used, together with the sample size (6400 used for each image class) that has provided a very good false positive tolerance 
 with about 99% accuracy, when compared to single channel HOG, with RGB images, and with smaller sample training ( 1000 vehicle imgs provided accuracy of about 96%).
 
 Below: window detection on test images
@@ -187,22 +187,24 @@ Here's a [link to my video result](./project_video_output.mp4)
 ####2. Describe how (and identify where in your code) you implemented some kind of filter for false positives and some method for combining overlapping bounding boxes.
 
 A heatmap is integrated for each pixel inside a hit window and it will also be integrated over each frame. In order to fade-out 
-the heatmap when there is no detection, the heatmap is reduced by a factor of 20% after each frame processed. 
+the heatmap when there is no detection, the heatmap is reduced by a factor of 10% after each frame processed. 
 The bounding box for each car detection in the video is only given for a heatmap position with values of at least 3 (thresholded heatmap).
 
 The code for fading the heatmap is given below and is in the function process_frame() at line 293. Note that the same heatmap 
 variable (same memory positions) is passed across calls to find_cars() and that gives the integration along frames. 
-Also note the fading of 20% per frame, given by multiplying the heatmap by 0.8 before thresholding and the use of the
+Also note the fading of 10% per frame, given by multiplying the heatmap by 0.9 before thresholding and the use of the
 "label()" function that will catch the neigboring heatmap pixels (after thresholding) and find a combined bounding box.
 
 ```python
 def process_frame(img_frame):
     global heatmap
-    scale = 1.2;
-    heatmap = find_cars(img_frame, heatmap, scale, maxysteps= 50,cells_per_step=2)
-    scale = 2
-    heatmap=find_cars(img_frame, heatmap, scale, maxysteps= 100,cells_per_step=2,yinitial=400)
-    heatmap = heatmap*0.8
+    scale = 1.4;
+    heatmap = find_cars(img_frame, heatmap, scale, maxysteps= 80,cells_per_step=1, yinitial = 390)
+    scale = 1.7
+    heatmap=find_cars(img_frame, heatmap, scale, maxysteps= 200,cells_per_step=2,yinitial=370)
+    scale = 2.4
+    heatmap=find_cars(img_frame, heatmap, scale, maxysteps= 200,cells_per_step=1,yinitial=450)
+    heatmap = heatmap*0.9
     labels =label(heatmap>2)
     draw_img =  draw_labeled_boxes(img_frame, labels)
     return draw_img

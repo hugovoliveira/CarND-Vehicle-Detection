@@ -283,19 +283,26 @@ def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, yinitial =
 # This function is passed as argument to the VideoClip builder It will use a global heatmap 
 # so that it can be integrated over frames also, the heatmap is softened in each frame by 30%, 
 # so that if a heat zone stops being "hitted" it will "cool down" 30% per frame
+global framne_n
+framne_n=0
 def process_frame(img_frame):
     global heatmap
-    scale = 1.2;
-    heatmap = find_cars(img_frame, heatmap, scale, maxysteps= 50,cells_per_step=2)
-    scale = 2
-    heatmap=find_cars(img_frame, heatmap, scale, maxysteps= 100,cells_per_step=2,yinitial=400)
-    heatmap = heatmap*0.8
+    scale = 1.4;
+    heatmap = find_cars(img_frame, heatmap, scale, maxysteps= 80,cells_per_step=1, yinitial = 390)
+    scale = 1.7
+    heatmap=find_cars(img_frame, heatmap, scale, maxysteps= 200,cells_per_step=2,yinitial=370)
+    scale = 2.4
+    heatmap=find_cars(img_frame, heatmap, scale, maxysteps= 200,cells_per_step=1,yinitial=450)
+    heatmap = heatmap*0.9
     labels =label(heatmap>2)
     draw_img =  draw_labeled_boxes(img_frame, labels)
     return draw_img
-
+#     global framne_n
+#     framne_n +=3
+#     cv2.imwrite('frame'+str(framne_n)+'.jpg',cv2.cvtColor(img_frame, cv2.COLOR_RGB2BGR))
+#     return img_frame
         
-def train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 50):
+def train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 1000):
     # time is used for measuring training performance
     import time
     tic = time.time()
@@ -343,7 +350,7 @@ def train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 50):
     print(X_test.shape)
     
     #Define linear SVCS
-    svc = LinearSVC()
+    svc = LinearSVC(C=0.0001)
 
     #Train SVC    
     svc.fit(X_train, y_train)
@@ -405,7 +412,7 @@ ax4.imshow(noncar_hog_img, 'gray')
 # Create and train linear SVC classifier. Pass path to vehicles and nonvehicle images
 # will return the classifier and the scaler necessary to fit features that will extracted
 # in the future to the same "basis" as the training set
-svc, sample_scaler = train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 5000)
+svc, sample_scaler = train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 8600)
 
 ## Try-out classifier on the test images
 example_folder = 'test_images'
@@ -419,8 +426,9 @@ titles = []
 for img_src in example_img_src:
     initial_image = mpimg.imread(example_folder+'/'+img_src)
     heatmap = np.zeros_like(initial_image[:,:,0])
-    heatmap, drawn_image =find_cars(initial_image, heatmap, scale =1.2, maxysteps= 50,cells_per_step=2, return_draw = True, box_color=(0,0,255))
-    heatmap, drawn_image =find_cars(drawn_image, heatmap, scale =2, maxysteps= 100,cells_per_step=2, return_draw = True, box_color=(0,255,0))
+    heatmap, drawn_image =find_cars(initial_image, heatmap, scale =1.4, maxysteps= 80,cells_per_step=1, return_draw = True, box_color=(255 ,0,0 ), yinitial = 390)
+    heatmap, drawn_image =find_cars(drawn_image, heatmap, scale =1.7, maxysteps= 200,cells_per_step=2, return_draw = True, box_color=(0,255,255), yinitial = 370)
+    heatmap, drawn_image =find_cars(drawn_image, heatmap, scale =2.4, maxysteps= 200,cells_per_step=1, return_draw = True, box_color=(255,255,255),yinitial = 380)
     images.append(drawn_image)
     heatmaps.append(heatmap.copy())
     titles.append(img_src)
