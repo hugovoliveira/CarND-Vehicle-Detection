@@ -181,9 +181,9 @@ def search_windows(img, windows, clf, scaler,
     #8) Return windows for positive detections
     return on_windows
     
-#This function defines the main pipeline
-def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, yinitial = 400, return_draw = False):
 
+#This function defines the main pipeline
+def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, yinitial = 400, return_draw = False, box_color = (0,0,255), OriginalColor = 'RGB'):
     #Defines the last line to look for vehicles
     yfinal = 656
     #hog definitions (# of orientation bins)
@@ -202,19 +202,23 @@ def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, yinitial =
     if return_draw:
         img2draw = img_arg.copy()
         
-    #normalize image, as training was performed with pngs
+    # copy and get  cropped image (region of interest)
     img = img_arg.copy()
-    img = img.astype(np.float32)/256
-
-    #get cropped image (region of interest)
     cropped_image = img[yinitial:yfinal,:,:]
     
     #convert to YCrCb colorspace (found to have better detection performance)
-    cropped_YCrCb = cv2.cvtColor(cropped_image, cv2.COLOR_RGB2YCrCb)
+    if OriginalColor == 'RGB':
+        cropped_YCrCb = cv2.cvtColor(cropped_image, cv2.COLOR_RGB2YCrCb)
+    if OriginalColor == 'BGR':
+        cropped_YCrCb = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2YCrCb)
+    
     if scale !=1:
         imshape = cropped_YCrCb.shape
         cropped_YCrCb = cv2.resize(cropped_YCrCb, (np.int(imshape[1]/scale), np.int(imshape[0]/scale)))
     
+    #normalize image, as training was performed with pngs
+    cropped_YCrCb = cropped_YCrCb.astype(np.float32)/255
+
     #Split channels
     channel0 = cropped_YCrCb[:,:,0] 
     channel1 = cropped_YCrCb[:,:,1]
@@ -232,6 +236,7 @@ def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, yinitial =
     hog0 = get_hog_features_single_ch(channel0, orient= hog_bins, pix_per_cel=pix_per_cell, cell_per_block=cells_per_block, feature_vector = False)
     hog1 = get_hog_features_single_ch(channel1, orient= hog_bins, pix_per_cel=pix_per_cell, cell_per_block=cells_per_block, feature_vector = False)
     hog2 = get_hog_features_single_ch(channel2, orient= hog_bins, pix_per_cel=pix_per_cell, cell_per_block=cells_per_block, feature_vector = False)
+        
 
     for xstep in range(nxsteps):
         for ystep in range(min(nysteps,maxysteps)):
@@ -267,39 +272,30 @@ def find_cars(img_arg, heatmap, scale, maxysteps, cells_per_step = 3, yinitial =
                 foundbox = ((xbox_left,ybox_top+yinitial),
                             (xbox_left+scaled_window_size, ybox_top+yinitial+scaled_window_size))
                 if return_draw:
-                    if scale == 1:
-                        rec_color = (0,0,255)
-                    elif scale == 1.5:
-                        rec_color = (0,255,0)
-                    elif scale == 2:
-                        rec_color = (255,0,0)
-                    else:
-                        rec_color = (0,255,255)
-                    cv2.rectangle(img2draw, foundbox[0], foundbox[1], rec_color,2)
+                    cv2.rectangle(img2draw, foundbox[0], foundbox[1], box_color,6)
                 img_boxes.append(foundbox)
                 heatmap[ybox_top+yinitial:ybox_top+scaled_window_size+yinitial,xbox_left:xbox_left+scaled_window_size]+=1
     if return_draw:
-        return img2draw, heatmap
+        return heatmap, img2draw
     else:
         return heatmap
 
-# This function is passed as argument to the VideoClip builder
-# It will use a global heatmap so that it can be integrated over frames
-# also, the heatmap is softened in each frame by 30%, so that if a heat zone stops being "hitted"
-# it will "cool down" 30% by frame, going assintotically to zero
+# This function is passed as argument to the VideoClip builder It will use a global heatmap 
+# so that it can be integrated over frames also, the heatmap is softened in each frame by 30%, 
+# so that if a heat zone stops being "hitted" it will "cool down" 30% per frame
 def process_frame(img_frame):
     global heatmap
-    scale = 1;
-    heatmap =find_cars(img_frame, heatmap, scale, maxysteps= 10,cells_per_step=3)
-    scale = 1.5
-    heatmap =find_cars(img_frame, heatmap, scale, maxysteps= 100,cells_per_step=2,yinitial=400)
-    heatmap = heatmap*0.7
+    scale = 1.2;
+    heatmap = find_cars(img_frame, heatmap, scale, maxysteps= 50,cells_per_step=2)
+    scale = 2
+    heatmap=find_cars(img_frame, heatmap, scale, maxysteps= 100,cells_per_step=2,yinitial=400)
+    heatmap = heatmap*0.8
     labels =label(heatmap>2)
     draw_img =  draw_labeled_boxes(img_frame, labels)
     return draw_img
 
         
-def train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 500):
+def train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 50):
     # time is used for measuring training performance
     import time
     tic = time.time()
@@ -404,7 +400,6 @@ ax3.set_title(titles[2])
 ax3.imshow(noncar_image)
 ax4.set_title(titles[3])
 ax4.imshow(noncar_hog_img, 'gray')
-plt.figure()        
 
 
 # Create and train linear SVC classifier. Pass path to vehicles and nonvehicle images
@@ -412,67 +407,45 @@ plt.figure()
 # in the future to the same "basis" as the training set
 svc, sample_scaler = train_classifier(vehicle_img_paths, non_vehicle_img_paths, samples = 5000)
 
-
-# images = []
-# titles = []
-# y_start_stop = [None, None]
-# xy_window = (128,128)
-# y_start_stop = [None, None]
-# overlap = 0.5
-# 
-# for img_src in example_img_src:
-#     initial_image = mpimg.imread(example_folder+'/'+img_src)
-#     initial_image = initial_image.astype(np.float32)/255
-#     windows_list = slide_window(initial_image, x_start_stop = [None, None], y_start_stop = y_start_stop, xy_window = (128,128), xy_overlap = (overlap,overlap))
-#     hits =  search_windows(initial_image, windows_list, svc, scaler = sample_scaler)
-#     drawn_image = draw_boxes(initial_image, hits, color = (0,0,255), thick=6)
-#     images.append(drawn_image)
-#     titles.append(img_src)
-
 ## Try-out classifier on the test images
 example_folder = 'test_images'
 example_img_src = os.listdir(example_folder)
 
+global heatmap
 heatmap = np.zeros_like(car_image_clrcvrt[:,:,0])
 images =[]
+heatmaps = []
 titles = []
 for img_src in example_img_src:
     initial_image = mpimg.imread(example_folder+'/'+img_src)
-    heatmap, drawn_image =find_cars(initial_image, heatmap, scale =1, maxysteps= 100,cells_per_step=2, return_draw = True)
+    heatmap = np.zeros_like(initial_image[:,:,0])
+    heatmap, drawn_image =find_cars(initial_image, heatmap, scale =1.2, maxysteps= 50,cells_per_step=2, return_draw = True, box_color=(0,0,255))
+    heatmap, drawn_image =find_cars(drawn_image, heatmap, scale =2, maxysteps= 100,cells_per_step=2, return_draw = True, box_color=(0,255,0))
     images.append(drawn_image)
+    heatmaps.append(heatmap.copy())
     titles.append(img_src)
 
 half_imags = np.int(np.floor(len(images)/2))
-print(half_imags)
-plt.figure()
 f, subplot_tuple = plt.subplots(2, half_imags, figsize=(40,20))
 for i in range(0,2):
     for j in range(0,half_imags):
         idx = i*half_imags+j
         subplot_tuple[i][j].set_title(titles[idx])
         subplot_tuple[i][j].imshow(images[idx])
+
+half_imags = np.int(np.floor(len(heatmaps)/2))
+f, subplot_tuple = plt.subplots(2, half_imags, figsize=(40,20))
+for i in range(0,2):
+    for j in range(0,half_imags):
+        idx = i*half_imags+j
+        subplot_tuple[i][j].set_title(titles[idx])
+        subplot_tuple[i][j].imshow(heatmaps[idx])
 plt.show()
 
-test_video = 'harder_challenge_video.mp4'
-test_output = 'harder_challenge_video_output.mp4'
-
-#heatmap initialization is required
-heatmap = np.zeros_like(initial_image[:,:,0])
-clip = VideoFileClip(test_video)    
-test_clip = clip.fl_image(process_frame)
-test_clip.write_videofile(test_output, audio = False)
-
+## Apply pipeline to video
 test_video = 'project_video.mp4'
 test_output = 'project_video_output.mp4'
 
-#heatmap initialization is required
-heatmap = np.zeros_like(initial_image[:,:,0])
-clip = VideoFileClip(test_video)    
-test_clip = clip.fl_image(process_frame)
-test_clip.write_videofile(test_output, audio = False)
-
-test_video = 'challenge_video.mp4'
-test_output = 'challenge_video_output.mp4'
 
 #heatmap initialization is required
 heatmap = np.zeros_like(initial_image[:,:,0])
